@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Build outputs
+dist/
+main.js
+main.js.map
+styles.css
+manifest.json
+
+# Coverage
+coverage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Obsidian
+.obsidian/
+
+# Environment
+.env
+
+# Sekha dev
+config.toml
+*.db
+*.db-shm
+*.db-wal
