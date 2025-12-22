@@ -14,8 +14,8 @@ const DEFAULT_SETTINGS: SekhaPluginSettings = {
 };
 
 export default class SekhaPlugin extends Plugin {
-    settings: SekhaPluginSettings;
-    memory: MemoryController;
+    settings!: SekhaPluginSettings;
+    memory!: MemoryController;
 
     async onload() {
         await this.loadSettings();
@@ -69,7 +69,8 @@ export default class SekhaPlugin extends Plugin {
             await this.app.vault.create(filename, content);
             new Notice(`Imported: ${filename}`);
         } catch (err) {
-            new Notice(`Failed to import: ${err.message}`);
+            const error = err as Error;
+            new Notice(`Failed to import: ${error.message}`);
         }
     }
 
@@ -81,7 +82,8 @@ export default class SekhaPlugin extends Plugin {
             }
             new Notice(`Imported ${results.length} conversations`);
         } catch (err) {
-            new Notice(`Failed: ${err.message}`);
+            const error = err as Error;
+            new Notice(`Failed: ${error.message}`);
         }
     }
 
@@ -94,7 +96,7 @@ sekha_id: ${conv.id}
 
 # ${conv.label}
 
-${conv.messages.map(m => `**${m.role}**: ${m.content}`).join('\n\n')}
+${conv.messages.map((m: any) => `**${m.role}**: ${m.content}`).join('\n\n')}
 `;
     }
 
@@ -171,7 +173,7 @@ class SekhaSearchModal extends Modal {
             const matches = await this.memory.search(query, { limit: 10 });
             results.empty();
             
-            matches.forEach(conv => {
+            matches.forEach((conv: any) => {
                 const item = results.createDiv('search-result');
                 item.setText(`${conv.label} - ${conv.created_at}`);
                 item.onclick = () => {
@@ -204,10 +206,10 @@ class SekhaSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName('API URL')
             .setDesc('Sekha controller URL')
-            .addText(text => text
+            .addText((text: any) => text
                 .setPlaceholder('http://localhost:8080')
                 .setValue(this.plugin.settings.apiUrl)
-                .onChange(async (value) => {
+                .onChange(async (value: string) => {
                     this.plugin.settings.apiUrl = value;
                     await this.plugin.saveSettings();
                 }));
@@ -215,10 +217,10 @@ class SekhaSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName('API Key')
             .setDesc('Your Sekha API key')
-            .addText(text => text
+            .addText((text: any) => text
                 .setPlaceholder('sk-...')
                 .setValue(this.plugin.settings.apiKey)
-                .onChange(async (value) => {
+                .onChange(async (value: string) => {
                     this.plugin.settings.apiKey = value;
                     await this.plugin.saveSettings();
                 }));
@@ -226,10 +228,10 @@ class SekhaSettingTab extends PluginSettingTab {
         new Setting(containerEl)
             .setName('Import Folder')
             .setDesc('Folder for imported conversations')
-            .addText(text => text
+            .addText((text: any) => text
                 .setPlaceholder('Sekha Conversations')
                 .setValue(this.plugin.settings.importFolder)
-                .onChange(async (value) => {
+                .onChange(async (value: string) => {
                     this.plugin.settings.importFolder = value;
                     await this.plugin.saveSettings();
                 }));
