@@ -1,0 +1,292 @@
+name: Obsidian Plugin CI
+
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+
+env:
+  NODE_VERSION: "20.x"
+
+
+jobs:
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Check TypeScript compilation
+        run: npx tsc --noEmit
+
+
+  test:
+    name: Test on Node.js ${{ matrix.node-version }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [18.x, 20.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test -- --coverage --ci --maxWorkers=2
+
+      - name: Check coverage threshold
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '20.x'
+        run: |
+          node -e "
+          const coverage = require('./coverage/coverage-summary.json');
+          const total = coverage.total;
+          const threshold = 70;
+
+          console.log('Coverage Summary:');
+          console.log('  Lines:', total.lines.pct + '%');
+          console.log('  Statements:', total.statements.pct + '%');
+          console.log('  Functions:', total.functions.pct + '%');
+          console.log('  Branches:', total.branches.pct + '%');
+
+          if (total.lines.pct < threshold) {
+            console.error('❌ Coverage below ' + threshold + '% threshold');
+            process.exit(1);
+          }
+          console.log('✅ Coverage meets ' + threshold + '% threshold');
+          "
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '20.x'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/coverage-final.json
+          flags: unittests
+          name: obsidian-plugin
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+
+  build:
+    name: Build Plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Check build outputs
+        run: |
+          if [ ! -f "main.js" ]; then
+            echo "❌ main.js not generated"
+            exit 1
+          fi
+          if [ ! -f "manifest.json" ]; then
+            echo "❌ manifest.json not found"
+            exit 1
+          fi
+          if [ ! -f "styles.css" ]; then
+            echo "⚠️  styles.css not found (optional)"
+          fi
+          echo "✅ Build outputs verified"
+
+      - name: Check bundle size
+        run: |
+          echo "📦 Bundle sizes:"
+          ls -lh main.js
+          SIZE=$(wc -c < main.js)
+          echo "main.js size: $SIZE bytes"
+          if [ $SIZE -gt 5242880 ]; then
+            echo "⚠️  Bundle size exceeds 5MB"
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsidian-plugin-build
+          path: |
+            main.js
+            manifest.json
+            styles.css
+
+
+  integration-test:
+    name: Integration Test with Mock Controller
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start mock controller
+        run: |
+          # Start a simple mock HTTP server for testing
+          node -e "
+          const http = require('http');
+          const server = http.createServer((req, res) => {
+            if (req.url === '/health') {
+              res.writeHead(200, {'Content-Type': 'application/json'});
+              res.end(JSON.stringify({status: 'ok'}));
+            } else if (req.url === '/api/messages') {
+              res.writeHead(200, {'Content-Type': 'application/json'});
+              res.end(JSON.stringify({messages: []}));
+            } else {
+              res.writeHead(404);
+              res.end();
+            }
+          });
+          server.listen(8080, () => console.log('Mock controller on :8080'));
+          " &
+          sleep 2
+
+      - name: Run integration tests
+        env:
+          SEKHA_CONTROLLER_URL: http://localhost:8080
+          SEKHA_API_KEY: test-token-123
+        run: |
+          if [ -d "tests/integration" ]; then
+            npm run test:integration
+          else
+            echo "⚠️  No integration tests found, skipping"
+          fi
+        continue-on-error: true
+
+
+  manifest-validation:
+    name: Validate manifest.json
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate manifest structure
+        run: |
+          node -e "
+          const manifest = require('./manifest.json');
+          const required = ['id', 'name', 'version', 'minAppVersion', 'description', 'author'];
+          const missing = required.filter(field => !manifest[field]);
+
+          if (missing.length > 0) {
+            console.error('❌ Missing required fields:', missing.join(', '));
+            process.exit(1);
+          }
+
+          // Validate version format
+          if (!/^\d+\.\d+\.\d+$/.test(manifest.version)) {
+            console.error('❌ Invalid version format:', manifest.version);
+            process.exit(1);
+          }
+
+          console.log('✅ manifest.json is valid');
+          console.log('   ID:', manifest.id);
+          console.log('   Version:', manifest.version);
+          console.log('   Min Obsidian:', manifest.minAppVersion);
+          "
+
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Check for sensitive files
+        run: |
+          if [ -f ".env" ] || [ -f "config.toml" ] || [ -f "*.db" ]; then
+            echo "❌ Sensitive files found in repo"
+            exit 1
+          fi
+          echo "✅ No sensitive files detected"
+
+
+  status-check:
+    name: All Checks Passed
+    runs-on: ubuntu-latest
+    needs: [lint, test, build, manifest-validation, security]
+    if: always()
+
+    steps:
+      - name: Check status
+        run: |
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "❌ Linting failed"
+            exit 1
+          fi
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "❌ Tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "❌ Build failed"
+            exit 1
+          fi
+          if [ "${{ needs.manifest-validation.result }}" != "success" ]; then
+            echo "❌ Manifest validation failed"
+            exit 1
+          fi
+          echo "✅ All required checks passed!"
